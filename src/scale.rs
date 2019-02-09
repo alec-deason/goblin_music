@@ -1,5 +1,6 @@
 use pitch::Letter;
 
+#[derive(Copy, Clone)]
 pub enum IntervalPattern {
     Major,
     Minor,

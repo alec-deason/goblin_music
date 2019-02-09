@@ -4,8 +4,10 @@ extern crate sample;
 extern crate synth;
 extern crate rand;
 
-mod constraints;
+mod single_part_constraints;
 mod scale;
+
+use crate::single_part_constraints as cf;
 
 use std::collections::{BinaryHeap, HashMap};
 use std::cmp::Ordering;
@@ -20,8 +22,8 @@ use pitch::{Letter, LetterOctave};
 use synth::{Point, Synth, Oscillator, oscillator, Envelope};
 use synth::dynamic;
 
-#[derive(Debug)]
-enum Interval {
+#[derive(Debug, PartialEq)]
+pub enum Interval {
     Unison,
     Octave,
     DiminishedFifth,
@@ -38,15 +40,15 @@ enum Interval {
     Other,
 }
 
-fn calculate_interval_semitones(a: &LetterOctave, b: &LetterOctave) -> i32 {
+fn calculate_interval_semitones(a: &LetterOctave, b: &LetterOctave) -> usize {
     let min = a.min(b);
     let max = a.max(b);
     let d_octave = max.octave() - min.octave();
     let d_note = max.letter() as i32 - min.letter() as i32;
-    d_octave * 12 + d_note
+    (d_octave * 12 + d_note) as usize
 }
 
-fn calculate_interval_number(a: &LetterOctave, b: &LetterOctave) -> i32 {
+fn calculate_interval_number(a: &LetterOctave, b: &LetterOctave) -> usize {
     let semitones = calculate_interval_semitones(a, b);
     semitones / 2 + semitones % 2
 }
@@ -83,11 +85,38 @@ enum InstrumentName {
 fn cantus_firmus_maker(scale: &scale::Scale) -> Vec<(LetterOctave, f64, f64)> {
     let mut rng = rand::thread_rng();
 
+    type CantusFirmusRules = Vec<Box<dyn cf::SinglePartConstraint>>;
+    let rules:CantusFirmusRules = vec![
+        Box::new(cf::NoteIsTonic(0)), // first note
+        Box::new(cf::NoteIsTonic(-1)), // last note
+        Box::new(cf::ConstrainRange(10)),
+        Box::new(cf::ClimaxNearTheMiddle),
+        Box::new(cf::ConstrainIntervals(vec![
+			Interval::PerfectFourth,
+			Interval::PerfectFifth,
+			Interval::Octave,
+			Interval::MajorSecond,
+			Interval::MinorSecond,
+			Interval::MajorThird,
+			Interval::MinorThird,
+			Interval::MinorSixth,
+        ])),
+		Box::new(cf::ConstrainRepeats(3)),
+		Box::new(cf::ConstrainContinuousSlopes(5)),
+		Box::new(cf::FinalApprochedByAStep),
+		Box::new(cf::NoConsecutiveSkips),
+		Box::new(cf::LargeLeapsFollowedByContraryMotion(3)),
+		Box::new(cf::AscendingSixthFollowedByFall),
+    // TODO: Avoid tritones
+    // TODO: An outlining of a seventh is avoided within a single line moving in the same direction
+    ];
+
     let len = 10;//rng.gen_range(8, 15);
-    fn rec_next_note(prefix: &Vec<LetterOctave>, scale: &scale::Scale, target_len: usize) -> Option<Vec<LetterOctave>> {
+    fn rec_next_note(prefix: &Vec<LetterOctave>, scale: &scale::Scale, target_len: usize, rules: &CantusFirmusRules) -> Option<Vec<LetterOctave>> {
 
         let mut rng = rand::thread_rng();
-        let mut weighted:Vec<(i32, i32)> = (-(scale.len() as i32)..scale.len() as i32).map(|j| (j, rng.gen_range(0, ((scale.len() + 1) as i32 - j.abs())*10000))).collect();
+        let max_jump = (scale.len() as f32 * 1.0) as i32;
+        let mut weighted:Vec<(i32, i32)> = (-max_jump..max_jump).map(|j| (j, rng.gen_range(0, ((max_jump + 1) - j.abs())*10000))).collect();
         weighted.sort_unstable_by(|(_, wa), (_, wb)| wb.partial_cmp(wa).unwrap());
         let mut jumps:Vec<i32> = weighted.iter().map(|(v, _)| *v).collect();
         let (current_degree, current_octave) = if prefix.len() > 0 {
@@ -98,7 +127,7 @@ fn cantus_firmus_maker(scale: &scale::Scale) -> Vec<(LetterOctave, f64, f64)> {
         } else {
             (
                 0,
-                rng.gen_range(1, 3)
+                rng.gen_range(1, 4)
             )
         };
         while jumps.len() > 0 {
@@ -106,11 +135,11 @@ fn cantus_firmus_maker(scale: &scale::Scale) -> Vec<(LetterOctave, f64, f64)> {
             let (new_letter, d_octave) = scale.note_from_degree(new_degree);
             let choice = LetterOctave(new_letter, current_octave + d_octave);
 
-            if true { //cantus_firmus_rules(&prefix, &choice, target_len, &scale) {
+            if rules.iter().filter(|r| r.is_active(prefix, target_len)).all(|r| r.is_valid(prefix, &choice, scale, target_len)) {
                 let mut new_prefix = prefix.clone();
                 new_prefix.push(choice);
                 if new_prefix.len() < target_len {
-                    let result = rec_next_note(&new_prefix, scale, target_len);
+                    let result = rec_next_note(&new_prefix, scale, target_len, rules);
                     if result.is_some() {
                         return result;
                     }
@@ -124,7 +153,7 @@ fn cantus_firmus_maker(scale: &scale::Scale) -> Vec<(LetterOctave, f64, f64)> {
 
 
 
-    if let Some(mut melody) = rec_next_note(&Vec::new(), &scale, len) {
+    if let Some(mut melody) = rec_next_note(&Vec::new(), &scale, len, &rules) {
         eprintln!("{:?}\n{}", melody, len);
         melody.drain(..).map(|p| (p, 4.0, 1.0)).collect() 
     } else {
@@ -216,141 +245,6 @@ fn first_species_rules(prefix: &Vec<LetterOctave>, choice: &LetterOctave, scale:
     true
 }
 
-fn cantus_firmus_rules(prefix: &Vec<LetterOctave>, choice: &LetterOctave, target_length: usize, scale: &Vec<LetterOctave>) -> bool {
-    let is_final = prefix.len() + 1 == target_length;
-
-    // First choice is always valid
-    if prefix.len() == 0 {
-        return true;
-    }
-    // End where you started
-    if prefix.len() + 1 == target_length {
-        if &prefix[0] != choice {
-            return false;
-        }
-    }
-
-    let choice_on_scale = scale.iter().position(|a| a == choice).unwrap() as i32;
-
-    // There should be a climax near the middle
-    let intro_end = target_length / 3;
-    let middle_end = target_length - intro_end;
-    if prefix.len() > middle_end {
-        let central_max = prefix[intro_end..middle_end].iter().max().unwrap();
-        if central_max <= choice {
-            return false;
-        }
-        let climax_count:usize = prefix.iter().map(|n| if n == central_max { 1 } else { 0 }).sum();
-        if climax_count > 1 {
-            return false;
-        }
-    }
-
-    // Total range should be <= a tenth
-    let min = prefix.iter().min().unwrap().min(choice);
-    let max = prefix.iter().max().unwrap().max(choice);
-    let interval = calculate_interval_number(min, max);
-    if interval > 10 {
-        return false;
-    }
-
-    let penultimate_on_scale = scale.iter().position(|a| a == &prefix[prefix.len()-1]).unwrap() as i32;
-    // Final must be approached by a step
-    if is_final {
-        if (choice_on_scale as i32 - penultimate_on_scale as i32).abs() != 1 {
-            return false;
-        }
-    }
-
-    // Permitted melodic intervals are the perfect fourth, fifth, and octave, as well as the major and minor second, major and minor third, and ascending minor sixth.
-    let interval = calculate_interval(&prefix[prefix.len()-1], choice);
-    let is_permitted = match interval {
-        Interval::PerfectFourth => true,
-        Interval::PerfectFifth => true,
-        Interval::Octave => true,
-        Interval::MajorSecond => true,
-        Interval::MinorSecond => true,
-        Interval::MajorThird => true,
-        Interval::MinorThird => true,
-        Interval::MinorSixth => {
-            &prefix[prefix.len()-1] < choice
-        },
-        _ => false,
-    };
-    if !is_permitted {
-        return false
-    }
-
-
-
-    if prefix.len() > 1 {
-        // The ascending minor sixth must be immediately followed by motion downwards.
-        let interval = calculate_interval(&prefix[prefix.len()-2], &prefix[prefix.len()-1]);
-        match interval {
-            Interval::MinorSixth => {
-               if &prefix[prefix.len()-1] <= choice {
-                   return false
-               }
-            },
-            _ => (),
-        };
-
-        // No consequitive skips
-        let pen_penultimate_on_scale = scale.iter().position(|a| a == &prefix[prefix.len()-2]).unwrap() as i32;
-        let first_gap = penultimate_on_scale - pen_penultimate_on_scale;
-        let second_gap = choice_on_scale - penultimate_on_scale;
-        if first_gap.abs() > 1 && second_gap.abs() > 1 {
-            return false;
-        }
-
-        // leaps larger than a third should be followed and preceded by motion in the opposite direction
-        let front_leap = calculate_interval_number(&prefix[prefix.len()-2], &prefix[prefix.len()-1]);
-        let back_leap = calculate_interval_number(&prefix[prefix.len()-1], choice);
-        if front_leap > 3 || back_leap > 3 {
-            if &prefix[prefix.len()-2] > &prefix[prefix.len()-1] {
-				if &prefix[prefix.len()-1] >= choice {
-					return false;
-				}
-			} else {
-				if &prefix[prefix.len()-1] <= choice {
-					return false;
-				}
-			}
-        }
-    }
-
-
-    // continuous assents and descents should be limited to 5 notes
-    if prefix.len() > 5 {
-        let initial_direction = prefix[0] > prefix[1];
-        let mut current_direction = initial_direction;
-        for n in 2..prefix.len() {
-            current_direction = prefix[n-1] > prefix[n];
-            if current_direction != initial_direction {
-                break;
-            }
-        }
-        if current_direction == initial_direction {
-            return false;
-        }
-    }
-
-	// No note should appear more than 3 times
-    let mut counts = HashMap::with_capacity(prefix.len()+1);
-	for note in prefix {
-        *counts.entry(note).or_insert(0) += 1;
-	}
-    *counts.entry(choice).or_insert(0) += 1;
-    if counts.values().max().unwrap() >= &3 {
-        return false;
-    }
-
-    // TODO: Avoid tritones
-    // TODO: An outlining of a seventh is avoided within a single line moving in the same direction
-
-    true
-}
-
 pub struct Composer {
     last_drum_hit: f64,
     drum_accents: Vec<f32>,
@@ -373,7 +267,10 @@ impl Composer {
             let mut rng = rand::thread_rng();
             let beat_duration = 60.0 / 180.0;
 
-            let s = scale::Scale::new(Letter::A, scale::IntervalPattern::Major);
+            let s = scale::Scale::new(
+                *[Letter::A, Letter::B, Letter::C, Letter::D, Letter::E, Letter::F, Letter::G].choose(&mut rng).unwrap(),
+                *[scale::IntervalPattern::Major, scale::IntervalPattern::Minor].choose(&mut rng).unwrap()
+            );
             let melody_part = cantus_firmus_maker(&s);
             //let counterpoint_part = first_species_counterpoint(&melody_part, &pitches);
             let mut parts = vec![
@@ -455,7 +352,7 @@ fn toot_horn() -> dynamic::Synth {
     dynamic::Synth::dynamic_legato()
         .oscillator(dynamic::oscillator::new())
         .loop_points(0.0, 1.0)
-        .fade(10.0, 500.0)
+        .fade(10.0, 300.0)
         .num_voices(3)
    //     .spread(0.2)
      //   .detune(0.2)
@@ -512,12 +409,14 @@ impl Performer {
         let (sender, receiver) = sync_channel(100);
         composer.launch_worker(sender);
 
-        Performer {
+        let mut p = Performer {
             synths,
             current_time: 0.0,
             pending_events: BinaryHeap::new(),
             note_source: receiver,
-        }
+        };
+        p.fill_notes();
+        p
     }
 
     pub fn is_complete(&self) -> bool {
@@ -525,7 +424,7 @@ impl Performer {
     }
 
     fn fill_notes(&mut self) {
-        for _ in 0..50 {
+        for _ in 0..10 {
             let (onset, instrument, pitch, velocity, duration) = self.note_source.recv().unwrap();
             self.pending_events.push(NoteEvent::On(onset, instrument, pitch, velocity));
             self.pending_events.push(NoteEvent::Off(onset+duration, instrument, pitch));
@@ -538,13 +437,13 @@ impl Performer {
 
         let mut current_sample = 0;
         while current_sample < buffer.len() {
-            if self.pending_events.len() < 10 {
-                self.fill_notes();
-            }
             let next_event_time = self.pending_events.peek().map_or(end_time + 1.0, |e| e.time());
             if next_event_time <= self.current_time {
                 // Trigger event
                 let event = self.pending_events.pop().unwrap();
+                let (onset, instrument, pitch, velocity, duration) = self.note_source.recv().unwrap();
+                self.pending_events.push(NoteEvent::On(onset, instrument, pitch, velocity));
+                self.pending_events.push(NoteEvent::Off(onset+duration, instrument, pitch));
                 match event {
                     NoteEvent::On(_, instrument, pitch, velocity) => {
                         self.synths.get_mut(&instrument).unwrap().note_on(pitch, velocity);
