@@ -80,25 +80,37 @@ enum InstrumentName {
     TapStick,
 }
 
-fn cantus_firmus_maker(scale: &Vec<LetterOctave>) -> Vec<(LetterOctave, f64, f64)> {
+fn cantus_firmus_maker(scale: &scale::Scale) -> Vec<(LetterOctave, f64, f64)> {
     let mut rng = rand::thread_rng();
 
     let len = 10;//rng.gen_range(8, 15);
-    fn rec_next_note(prefix: &Vec<LetterOctave>, scale: &Vec<LetterOctave>, idx: usize, target_len: usize) -> Option<Vec<LetterOctave>> {
+    fn rec_next_note(prefix: &Vec<LetterOctave>, scale: &scale::Scale, target_len: usize) -> Option<Vec<LetterOctave>> {
 
         let mut rng = rand::thread_rng();
-        let mut weighted:Vec<(i32, i32)> = [-7i32, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7].iter().map(|j| (*j, rng.gen_range(0, (8-j.abs())*10000))).collect();
+        let mut weighted:Vec<(i32, i32)> = (-(scale.len() as i32)..scale.len() as i32).map(|j| (j, rng.gen_range(0, ((scale.len() + 1) as i32 - j.abs())*10000))).collect();
         weighted.sort_unstable_by(|(_, wa), (_, wb)| wb.partial_cmp(wa).unwrap());
         let mut jumps:Vec<i32> = weighted.iter().map(|(v, _)| *v).collect();
+        let (current_degree, current_octave) = if prefix.len() > 0 {
+            (
+                scale.degree_from_note(&prefix[prefix.len()-1].letter()).unwrap() as i32,
+                prefix[prefix.len()-1].octave()
+            )
+        } else {
+            (
+                0,
+                rng.gen_range(1, 3)
+            )
+        };
         while jumps.len() > 0 {
-            let new_idx = (idx as i32 + jumps.pop().unwrap()).min(scale.len() as i32 -1).max(0) as usize;
-            let choice = scale[new_idx];
+            let new_degree = (current_degree + jumps.pop().unwrap()).min(scale.len() as i32 -1).max(0);
+            let (new_letter, d_octave) = scale.note_from_degree(new_degree);
+            let choice = LetterOctave(new_letter, current_octave + d_octave);
 
-            if cantus_firmus_rules(&prefix, &choice, target_len, &scale) {
+            if true { //cantus_firmus_rules(&prefix, &choice, target_len, &scale) {
                 let mut new_prefix = prefix.clone();
                 new_prefix.push(choice);
                 if new_prefix.len() < target_len {
-                    let result = rec_next_note(&new_prefix, scale, new_idx, target_len);
+                    let result = rec_next_note(&new_prefix, scale, target_len);
                     if result.is_some() {
                         return result;
                     }
@@ -112,7 +124,7 @@ fn cantus_firmus_maker(scale: &Vec<LetterOctave>) -> Vec<(LetterOctave, f64, f64
 
 
 
-    if let Some(mut melody) = rec_next_note(&Vec::new(), &scale, 7, len) {
+    if let Some(mut melody) = rec_next_note(&Vec::new(), &scale, len) {
         eprintln!("{:?}\n{}", melody, len);
         melody.drain(..).map(|p| (p, 4.0, 1.0)).collect() 
     } else {
@@ -360,34 +372,24 @@ impl Composer {
         thread::spawn(move || {
             let mut rng = rand::thread_rng();
             let beat_duration = 60.0 / 180.0;
-            let mut pitches = vec![
-                LetterOctave(Letter::E, 2),
-                LetterOctave(Letter::Fsh, 2),
-                LetterOctave(Letter::G, 2),
-                LetterOctave(Letter::A, 2),
-                LetterOctave(Letter::B, 2),
-                LetterOctave(Letter::C, 3),
-                LetterOctave(Letter::D, 3),
-            ];
-            pitches.extend(pitches.clone().iter().map(|p| LetterOctave(p.letter(), p.octave()+1)));
-            pitches.push(LetterOctave(Letter::E, 4));
 
-            let melody_part = cantus_firmus_maker(&pitches);
-            let counterpoint_part = first_species_counterpoint(&melody_part, &pitches);
+            let s = scale::Scale::new(Letter::A, scale::IntervalPattern::Major);
+            let melody_part = cantus_firmus_maker(&s);
+            //let counterpoint_part = first_species_counterpoint(&melody_part, &pitches);
             let mut parts = vec![
                 (0.0, melody_part, InstrumentName::TootHorn),
-                (0.0, counterpoint_part, InstrumentName::BassHorn),
+                //(0.0, counterpoint_part, InstrumentName::BassHorn),
             ];
 			let mut notes: usize = parts.iter().map(|(_, p, _)| p.len()).sum();
 
             loop {
 				if notes == 0 {
                     let next_start = parts[0].0 + 16.0;
-					let melody_part = cantus_firmus_maker(&pitches);
-                    let counterpoint_part = first_species_counterpoint(&melody_part, &pitches);
+					let melody_part = cantus_firmus_maker(&s);
+                    //let counterpoint_part = first_species_counterpoint(&melody_part, &pitches);
 					parts = vec![
 						(next_start, melody_part, InstrumentName::TootHorn),
-						(next_start, counterpoint_part, InstrumentName::BassHorn),
+						//(next_start, counterpoint_part, InstrumentName::BassHorn),
 					];
 					notes = parts.iter().map(|(_, p, _)| p.len()).sum();
 				}

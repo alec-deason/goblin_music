@@ -10,7 +10,7 @@ type Input = AudioSample;
 type Output = AudioSample;
 
 const CHANNELS: i32 = 2;
-const FRAMES: u32 = 128;
+const FRAMES: u32 = 16;
 const SAMPLE_HZ: f64 = 48_000.0;
 
 fn main() {

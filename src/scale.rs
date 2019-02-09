@@ -1,6 +1,6 @@
 use pitch::Letter;
 
-enum IntervalPattern {
+pub enum IntervalPattern {
     Major,
     Minor,
 }
@@ -37,7 +37,7 @@ impl IntervalPattern {
     }
 }
 
-struct Scale {
+pub struct Scale {
     tonic: Letter,
     interval_pattern: IntervalPattern,
 }
@@ -50,13 +50,26 @@ impl Scale {
         }
     }
 
-    pub fn degree(&self, degree: i32) -> (Letter, i32) {
+    pub fn len(&self) -> usize {
+        self.interval_pattern.len()
+    }
+
+    pub fn note_from_degree(&self, degree: i32) -> (Letter, i32) {
         let semitones_delta = self.interval_pattern.semitones_from_tonic(degree);
         let letter = self.tonic + semitones_delta;
         // This assumes equal temperament but I think the pitch library is already
         // assuming that
         let octave_delta = semitones_delta / 12;
         (letter, octave_delta)
+    }
+
+    pub fn letters(&self) -> Vec<Letter> {
+        (0..self.len()).map(|d| self.note_from_degree(d as i32).0).collect()
+    }
+
+    pub fn degree_from_note(&self, note: &Letter) -> Option<usize> {
+        // Ignores octave...
+        self.letters().iter().position(|l| l == note)
     }
 }
 
@@ -65,7 +78,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scale_positive_degrees() {
+    fn test_note_from_degree_positive_degrees() {
         let scale = Scale::new(Letter::C, IntervalPattern::Major);
         for (degree, expected) in &[
             (0, (Letter::C, 0)),
@@ -79,12 +92,12 @@ mod tests {
             (8, (Letter::D, 1)),
             (9, (Letter::E, 1)),
         ] {
-            assert_eq!(scale.degree(*degree), *expected);
+            assert_eq!(scale.note_from_degree(*degree), *expected);
         }
     }
 
     #[test]
-    fn test_scale_negative_degrees() {
+    fn test_note_from_degree_negative_degrees() {
         let scale = Scale::new(Letter::A, IntervalPattern::Minor);
         for (degree, expected) in &[
             (0, (Letter::A, 0)),
@@ -98,7 +111,25 @@ mod tests {
             (-8, (Letter::G, -1)),
             (-9, (Letter::F, -1)),
         ] {
-            assert_eq!(scale.degree(*degree), *expected);
+            assert_eq!(scale.note_from_degree(*degree), *expected);
         }
+    }
+
+    #[test]
+    fn test_letters() {
+        let scale = Scale::new(Letter::A, IntervalPattern::Minor);
+        assert_eq!(scale.letters(), vec![Letter::A, Letter::B, Letter::C, Letter::D, Letter::E, Letter::F, Letter::G]);
+        let scale = Scale::new(Letter::D, IntervalPattern::Major);
+        assert_eq!(scale.letters(), vec![Letter::D, Letter::E, Letter::Fsh, Letter::G, Letter::A, Letter::B, Letter::Csh])
+    }
+
+    #[test]
+    fn test_degree_from_note() {
+        let scale = Scale::new(Letter::G, IntervalPattern::Major);
+        assert_eq!(scale.degree_from_note(&Letter::G), Some(0));
+        assert_eq!(scale.degree_from_note(&Letter::A), Some(1));
+        assert_eq!(scale.degree_from_note(&Letter::B), Some(2));
+        assert_eq!(scale.degree_from_note(&Letter::Fsh), Some(6));
+        assert_eq!(scale.degree_from_note(&Letter::Csh), None);
     }
 }
