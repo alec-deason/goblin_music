@@ -1,0 +1,16 @@
+[package]
+name = "goblin_music"
+version = "0.1.0"
+authors = ["Alec Deason <alec50@tinycountry.com>"]
+edition = "2018"
+
+[lib]
+name = "goblin_music"
+crate-type = ["rlib"]
+
+[dependencies]
+    rand = "0.6.0-pre.1"
+    synth = "0.11.0"
+    pitch_calc = "0.11.0"
+    portaudio = "0.6.3"
+    sample = "0.6.0"
