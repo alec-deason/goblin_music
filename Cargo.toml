@@ -14,4 +14,4 @@ crate-type = ["rlib"]
     pitch_calc = "0.11.0"
     portaudio = "0.6.3"
     sample = "0.6.0"
-    music_tools = { path = "../music_tools" }
+    music_tools = { git = "https://github.com/alec-deason/music_tools.git" }
