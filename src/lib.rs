@@ -64,6 +64,37 @@ fn minimal_cantus_firmus_rules() -> CantusFirmusRules {
     ]
 }
 
+type CounterPointRules = Vec<Box<dyn cp::TwoPartConstraint>>;
+fn first_species_rules() -> CounterPointRules {
+    vec![
+        Box::new(cp::LimitNoteInterval(0, vec![1, 5, 8], vec![1, 8])),
+        Box::new(cp::LimitNoteInterval(-1, vec![1, 8], vec![1, 8])),
+        Box::new(cp::PenultimateSimultaneity),
+        Box::new(cp::LimitInterval(vec![
+            ChromaticInterval(3, Quality::Major),
+            ChromaticInterval(3, Quality::Minor),
+            ChromaticInterval(5, Quality::Diminished),
+            ChromaticInterval(5, Quality::Perfect),
+            ChromaticInterval(6, Quality::Major),
+            ChromaticInterval(6, Quality::Minor),
+            ChromaticInterval(8, Quality::Perfect),
+            ChromaticInterval(10, Quality::Minor),
+            ChromaticInterval(10, Quality::Minor),
+        ])),
+        Box::new(cp::NoCrossing),
+        Box::new(cp::NoParallelPerfects),
+        Box::new(cp::NoAntiParallelPerfects),
+        Box::new(cp::NoHiddenPerfects),
+        Box::new(cp::LimitIntervalChains(3, 3)),
+        Box::new(cp::LimitIntervalChains(3, 6)),
+        Box::new(cp::PreferContraryMotion),
+        Box::new(cp::NoSimultaniousLeaps),
+        // TODO: Thirds and sixths predominate in exercises, with fifths and octaves thoughtfully deployed for variety.
+        // TODO: Avoid a cross relation against the leading tone in minor.
+        // TODO: It is conducive to independence when the climax of the counterpoint does not coincide with that of the cantus
+    ]
+}
+
 fn cantus_firmus_maker(scale: &Scale<PC>, len: usize) -> Option<Vec<(Note, f64, f64)>> {
     let rules = minimal_cantus_firmus_rules();
 
@@ -118,34 +149,7 @@ fn first_species_counterpoint(
 ) -> Option<Vec<(Note, f64, f64)>> {
     let true_melody: Vec<Note> = melody.iter().map(|(p, _, _)| *p).collect();
 
-    type Rules = Vec<Box<dyn cp::TwoPartConstraint>>;
-    let rules: Rules = vec![
-        Box::new(cp::LimitNoteInterval(0, vec![1, 5, 8], vec![1, 8])),
-        Box::new(cp::LimitNoteInterval(-1, vec![1, 8], vec![1, 8])),
-        Box::new(cp::PenultimateSimultaneity),
-        Box::new(cp::LimitInterval(vec![
-            ChromaticInterval(3, Quality::Major),
-            ChromaticInterval(3, Quality::Minor),
-            ChromaticInterval(5, Quality::Diminished),
-            ChromaticInterval(5, Quality::Perfect),
-            ChromaticInterval(6, Quality::Major),
-            ChromaticInterval(6, Quality::Minor),
-            ChromaticInterval(8, Quality::Perfect),
-            ChromaticInterval(10, Quality::Minor),
-            ChromaticInterval(10, Quality::Minor),
-        ])),
-        Box::new(cp::NoCrossing),
-        Box::new(cp::NoParallelPerfects),
-        Box::new(cp::NoAntiParallelPerfects),
-        Box::new(cp::NoHiddenPerfects),
-        Box::new(cp::LimitIntervalChains(3, 3)),
-        Box::new(cp::LimitIntervalChains(3, 6)),
-        Box::new(cp::PreferContraryMotion),
-        Box::new(cp::NoSimultaniousLeaps),
-        // TODO: Thirds and sixths predominate in exercises, with fifths and octaves thoughtfully deployed for variety.
-        // TODO: Avoid a cross relation against the leading tone in minor.
-        // TODO: It is conducive to independence when the climax of the counterpoint does not coincide with that of the cantus
-    ];
+    let rules = first_species_rules();
 
     let len = melody.len();
     fn rec_next_note(
@@ -153,7 +157,7 @@ fn first_species_counterpoint(
         melody: &Vec<Note>,
         scale: &Scale<PC>,
         target_len: usize,
-        rules: &Rules,
+        rules: &CounterPointRules,
         current_degree: i32,
     ) -> Option<Vec<Note>> {
         let is_final = prefix.len() + 1 == target_len;
@@ -198,6 +202,84 @@ fn first_species_counterpoint(
     }
 }
 
+fn second_species_counterpoint(
+    melody: &Vec<(Note, f64, f64)>,
+    scale: &Scale<PC>,
+) -> Option<Vec<(Note, f64, f64)>> {
+    let true_melody: Vec<Note> = melody.iter().map(|(p, _, _)| *p).collect();
+
+    let weak_beat_rules = first_species_rules();
+    let strong_beat_rules = minimal_cantus_firmus_rules();
+
+    let len = melody.len();
+    fn rec_next_note(
+        strong_beat_prefix: &Vec<Note>,
+        weak_beat_prefix: &Vec<Note>,
+        melody: &Vec<Note>,
+        scale: &Scale<PC>,
+        target_len: usize,
+        strong_beat_rules: &CantusFirmusRules,
+        weak_beat_rules: &CounterPointRules,
+        current_degree: i32,
+    ) -> Option<(Vec<Note>, Vec<Note>)> {
+        let is_final = strong_beat_prefix.len().min(weak_beat_prefix.len()) + 1 == target_len;
+
+        let mut rng = rand::thread_rng();
+        let max_jump = (scale.len() as f32 * 1.0) as i32;
+        let mut weighted: Vec<(i32, i32)> = (-max_jump..max_jump)
+            .map(|j| (j, rng.gen_range(0, ((max_jump + 1) - j.abs()) * 10000)))
+            .collect();
+        weighted.sort_unstable_by(|(_, wa), (_, wb)| wb.partial_cmp(wa).unwrap());
+        let mut jumps: Vec<i32> = weighted.iter().map(|(v, _)| *v).collect();
+        while jumps.len() > 0 {
+            let new_degree = current_degree + jumps.pop().unwrap();
+            let choice = scale.note_from_degree(new_degree);
+
+            let mut acceptable = false;
+            let mut new_weak_beat_prefix = weak_beat_prefix.clone();
+            let mut new_strong_beat_prefix = strong_beat_prefix.clone();
+            if weak_beat_prefix.len() < strong_beat_prefix.len() {
+                if weak_beat_rules
+                    .iter()
+                    .filter(|r| r.is_active(weak_beat_prefix, melody))
+                    .all(|r| r.is_valid(weak_beat_prefix, &melody, &choice, scale)) {
+                    acceptable = true;
+                    new_weak_beat_prefix.push(choice);
+                }
+            } else {
+                if strong_beat_rules
+                    .iter()
+                    .filter(|r| r.is_active(strong_beat_prefix, melody.len()))
+                    .all(|r| r.is_valid(strong_beat_prefix, &choice, scale, melody.len())) {
+                    acceptable = true;
+                    new_strong_beat_prefix.push(choice);
+                }
+            };
+
+            if acceptable {
+                if !is_final {
+                    let result = rec_next_note(&new_strong_beat_prefix, &new_weak_beat_prefix, melody, scale, target_len, strong_beat_rules, weak_beat_rules, new_degree);
+                    if result.is_some() {
+                        return result;
+                    }
+                } else {
+                    return Some((new_strong_beat_prefix.to_vec(), new_weak_beat_prefix.to_vec()));
+                }
+            }
+        }
+        None
+    }
+
+    let initial_degree = scale.degree_from_note(&true_melody[0].0).unwrap();
+    let initial_degree = initial_degree as i32 + true_melody[0].1 * scale.len() as i32;
+    if let Some((mut strong, mut weak)) = rec_next_note(&Vec::new(), &Vec::new(), &true_melody, scale, len, &strong_beat_rules, &weak_beat_rules, initial_degree) {
+        let cp = strong.iter().zip(weak.iter()).map(|(a,b)| vec![(*a, 2.0, 1.0) , (*b, 2.0, 1.0)]).flatten().collect();
+        Some(cp)
+    } else {
+        None
+    }
+}
+
 pub struct Composer {
 }
 
@@ -210,9 +292,9 @@ impl Composer {
     fn launch_worker(self, channel: SyncSender<(f64, InstrumentName, Note, f32, f64)>) {
         thread::spawn(move || {
             let mut rng = rand::thread_rng();
-            let beat_duration = 60.0 / 180.0;
+            let beat_duration = 60.0 / 160.0;
 
-            let s = Scale::new(
+            let mut s = Scale::new(
                 *[PC::from_str("A").unwrap(), PC::from_str("B").unwrap(), PC::from_str("C").unwrap(), PC::from_str("D").unwrap(), PC::from_str("E").unwrap(), PC::from_str("F").unwrap(), PC::from_str("G").unwrap()].choose(&mut rng).unwrap(),
                 *[IntervalPattern::Major, IntervalPattern::Minor].choose(&mut rng).unwrap()
             );
@@ -224,10 +306,10 @@ impl Composer {
                     panic!();
                 }
             };
-            let mut counterpoint_part = first_species_counterpoint(&melody_part, &s);
+            let mut counterpoint_part = second_species_counterpoint(&melody_part, &s);
             while counterpoint_part.is_none() {
                 melody_part = cantus_firmus_maker(&s, len).unwrap();
-                counterpoint_part = first_species_counterpoint(&melody_part, &s);
+                counterpoint_part = second_species_counterpoint(&melody_part, &s);
             }
             let counterpoint_part = counterpoint_part.unwrap();
             eprintln!("cantus firmus: {:?}", melody_part.iter().map(|n| n.0).collect::<Vec<Note>>());
@@ -240,13 +322,17 @@ impl Composer {
 
             loop {
                 if notes == 0 {
+                    s = Scale::new(
+                        *[PC::from_str("A").unwrap(), PC::from_str("B").unwrap(), PC::from_str("C").unwrap(), PC::from_str("D").unwrap(), PC::from_str("E").unwrap(), PC::from_str("F").unwrap(), PC::from_str("G").unwrap()].choose(&mut rng).unwrap(),
+                        *[IntervalPattern::Major, IntervalPattern::Minor].choose(&mut rng).unwrap()
+                    );
                     let next_start = parts[0].0 + 16.0;
 					let len = rand::thread_rng().gen_range(9, 15);
                     let mut melody_part = cantus_firmus_maker(&s, len).unwrap();
-                    let mut counterpoint_part = first_species_counterpoint(&melody_part, &s);
+                    let mut counterpoint_part = second_species_counterpoint(&melody_part, &s);
                     while counterpoint_part.is_none() {
                         melody_part = cantus_firmus_maker(&s, len).unwrap();
-                        counterpoint_part = first_species_counterpoint(&melody_part, &s);
+                        counterpoint_part = second_species_counterpoint(&melody_part, &s);
                     }
                     let counterpoint_part = counterpoint_part.unwrap();
                     eprintln!("cantus firmus: {:?}", melody_part.iter().map(|n| n.0).collect::<Vec<Note>>());
@@ -406,7 +492,7 @@ impl Performer {
             self.pending_events
                 .push(NoteEvent::On(onset, instrument, pitch.clone(), velocity));
             self.pending_events
-                .push(NoteEvent::Off(onset + duration, instrument, pitch));
+                .push(NoteEvent::Off(onset + duration*0.8, instrument, pitch));
         }
     }
 
@@ -428,7 +514,7 @@ impl Performer {
                 self.pending_events
                     .push(NoteEvent::On(onset, instrument, pitch.clone(), velocity));
                 self.pending_events
-                    .push(NoteEvent::Off(onset + duration, instrument, pitch));
+                    .push(NoteEvent::Off(onset + duration*0.8, instrument, pitch));
                 match event {
                     NoteEvent::On(_, instrument, pitch, velocity) => {
                         self.synths
