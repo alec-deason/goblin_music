@@ -6,8 +6,6 @@ use portaudio as pa;
 extern crate goblin_music;
 
 type AudioSample = f32;
-type Input = AudioSample;
-type Output = AudioSample;
 
 const CHANNELS: i32 = 2;
 const FRAMES: u32 = 16;
@@ -19,11 +17,12 @@ fn main() {
 
 fn run() -> Result<(), pa::Error> {
     let composer = goblin_music::Composer::new();
-    let mut performer = goblin_music::Performer::new(composer, SAMPLE_HZ);
-    
+    let mut performer = goblin_music::Performer::new(composer);
+
     // The callback we'll use to pass to the Stream.
-    let callback = move |pa::OutputStreamCallbackArgs { buffer, time, .. }| {
-        let buffer: &mut [[AudioSample; CHANNELS as usize]] = sample::slice::to_frame_slice_mut(buffer).unwrap();
+    let callback = move |pa::OutputStreamCallbackArgs { buffer, .. }| {
+        let buffer: &mut [[AudioSample; CHANNELS as usize]] =
+            sample::slice::to_frame_slice_mut(buffer).unwrap();
         sample::slice::equilibrium(buffer);
 
         performer.fill_slice(buffer, SAMPLE_HZ as f64);
