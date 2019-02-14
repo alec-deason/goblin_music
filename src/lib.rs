@@ -95,7 +95,7 @@ fn first_species_rules() -> CounterPointRules {
     ]
 }
 
-fn cantus_firmus_maker(scale: &Scale<PC>, len: usize) -> Option<Vec<(Note, f64, f64)>> {
+fn cantus_firmus_maker(scale: &Scale<PC>, len: usize) -> Option<Vec<(Note, f64, f64, f64)>> {
     let rules = minimal_cantus_firmus_rules();
 
     fn rec_next_note(
@@ -137,17 +137,17 @@ fn cantus_firmus_maker(scale: &Scale<PC>, len: usize) -> Option<Vec<(Note, f64, 
     }
 
     if let Some(mut melody) = rec_next_note(&Vec::new(), &scale, len, &rules, scale.len() as i32 *4) {
-        Some(melody.drain(..).map(|p| (p, 4.0, 1.0)).collect())
+        Some(melody.drain(..).map(|p| (p, 4.0, 3.0, 1.0)).collect())
     } else {
         None
     }
 }
 
 fn first_species_counterpoint(
-    melody: &Vec<(Note, f64, f64)>,
+    melody: &Vec<(Note, f64, f64, f64)>,
     scale: &Scale<PC>,
-) -> Option<Vec<(Note, f64, f64)>> {
-    let true_melody: Vec<Note> = melody.iter().map(|(p, _, _)| *p).collect();
+) -> Option<Vec<(Note, f64, f64, f64)>> {
+    let true_melody: Vec<Note> = melody.iter().map(|(p, _, _, _)| *p).collect();
 
     let rules = first_species_rules();
 
@@ -196,20 +196,20 @@ fn first_species_counterpoint(
     let initial_degree = scale.degree_from_note(&true_melody[0].0).unwrap();
     let initial_degree = initial_degree as i32 + true_melody[0].1 * scale.len() as i32;
     if let Some(mut melody) = rec_next_note(&Vec::new(), &true_melody, scale, len, &rules, initial_degree) {
-        Some(melody.drain(..).map(|p| (p, 4.0, 1.0)).collect())
+        Some(melody.drain(..).map(|p| (p, 4.0, 3.0, 1.0)).collect())
     } else {
         None
     }
 }
 
 fn second_species_counterpoint(
-    melody: &Vec<(Note, f64, f64)>,
+    melody: &Vec<(Note, f64, f64, f64)>,
     scale: &Scale<PC>,
-) -> Option<Vec<(Note, f64, f64)>> {
-    let true_melody: Vec<Note> = melody.iter().map(|(p, _, _)| *p).collect();
+) -> Option<Vec<(Note, f64, f64, f64)>> {
+    let true_melody: Vec<Note> = melody.iter().map(|(p, _, _, _)| *p).collect();
 
-    let weak_beat_rules = first_species_rules();
-    let strong_beat_rules = minimal_cantus_firmus_rules();
+    let strong_beat_rules = first_species_rules();
+    let weak_beat_rules = minimal_cantus_firmus_rules();
 
     let len = melody.len();
     fn rec_next_note(
@@ -218,8 +218,8 @@ fn second_species_counterpoint(
         melody: &Vec<Note>,
         scale: &Scale<PC>,
         target_len: usize,
-        strong_beat_rules: &CantusFirmusRules,
-        weak_beat_rules: &CounterPointRules,
+        weak_beat_rules: &CantusFirmusRules,
+        strong_beat_rules: &CounterPointRules,
         current_degree: i32,
     ) -> Option<(Vec<Note>, Vec<Note>)> {
         let is_final = strong_beat_prefix.len().min(weak_beat_prefix.len()) + 1 == target_len;
@@ -241,16 +241,16 @@ fn second_species_counterpoint(
             if weak_beat_prefix.len() < strong_beat_prefix.len() {
                 if weak_beat_rules
                     .iter()
-                    .filter(|r| r.is_active(weak_beat_prefix, melody))
-                    .all(|r| r.is_valid(weak_beat_prefix, &melody, &choice, scale)) {
+                    .filter(|r| r.is_active(weak_beat_prefix, melody.len()))
+                    .all(|r| r.is_valid(weak_beat_prefix, &choice, scale, melody.len())) {
                     acceptable = true;
                     new_weak_beat_prefix.push(choice);
                 }
             } else {
                 if strong_beat_rules
                     .iter()
-                    .filter(|r| r.is_active(strong_beat_prefix, melody.len()))
-                    .all(|r| r.is_valid(strong_beat_prefix, &choice, scale, melody.len())) {
+                    .filter(|r| r.is_active(strong_beat_prefix, melody))
+                    .all(|r| r.is_valid(strong_beat_prefix, &melody, &choice, scale)) {
                     acceptable = true;
                     new_strong_beat_prefix.push(choice);
                 }
@@ -258,7 +258,7 @@ fn second_species_counterpoint(
 
             if acceptable {
                 if !is_final {
-                    let result = rec_next_note(&new_strong_beat_prefix, &new_weak_beat_prefix, melody, scale, target_len, strong_beat_rules, weak_beat_rules, new_degree);
+                    let result = rec_next_note(&new_strong_beat_prefix, &new_weak_beat_prefix, melody, scale, target_len, weak_beat_rules, strong_beat_rules, new_degree);
                     if result.is_some() {
                         return result;
                     }
@@ -272,8 +272,8 @@ fn second_species_counterpoint(
 
     let initial_degree = scale.degree_from_note(&true_melody[0].0).unwrap();
     let initial_degree = initial_degree as i32 + true_melody[0].1 * scale.len() as i32;
-    if let Some((mut strong, mut weak)) = rec_next_note(&Vec::new(), &Vec::new(), &true_melody, scale, len, &strong_beat_rules, &weak_beat_rules, initial_degree) {
-        let cp = strong.iter().zip(weak.iter()).map(|(a,b)| vec![(*a, 2.0, 1.0) , (*b, 2.0, 1.0)]).flatten().collect();
+    if let Some((mut strong, mut weak)) = rec_next_note(&Vec::new(), &Vec::new(), &true_melody, scale, len, &weak_beat_rules, &strong_beat_rules, initial_degree) {
+        let cp = strong.iter().zip(weak.iter()).map(|(a,b)| vec![(*a, 2.0, 0.4, 1.0) , (*b, 2.0, 0.4, 1.0)]).flatten().collect();
         Some(cp)
     } else {
         None
@@ -289,7 +289,7 @@ impl Composer {
         }
     }
 
-    fn launch_worker(self, channel: SyncSender<(f64, InstrumentName, Note, f32, f64)>) {
+    fn launch_worker(self, channel: SyncSender<(f64, InstrumentName, Note, f32, f64, f64)>) {
         thread::spawn(move || {
             let mut rng = rand::thread_rng();
             let beat_duration = 60.0 / 160.0;
@@ -352,9 +352,9 @@ impl Composer {
                         min_time = part_next;
                     }
                 }
-                let (pitch, duration, velocity) = parts[next].1[0];
+                let (pitch, gap, duration, velocity) = parts[next].1[0];
                 let instrument = parts[next].2;
-                parts[next].0 += duration;
+                parts[next].0 += gap;
                 parts[next].1.rotate_left(1);
                 channel
                     .send((
@@ -362,7 +362,8 @@ impl Composer {
                         instrument,
                         pitch,
                         velocity as f32,
-                        duration * 0.75 * beat_duration,
+                        gap * beat_duration,
+                        duration * beat_duration,
                     ))
                     .unwrap();
                 notes -= 1;
@@ -424,10 +425,11 @@ fn toot_horn() -> dynamic::Synth {
     dynamic::Synth::dynamic_legato()
         .oscillator(dynamic::oscillator::new())
         .loop_points(0.0, 1.0)
+        .duration(1.0)
         .fade(10.0, 300.0)
-        .num_voices(1)
-        //     .spread(0.2)
-        //   .detune(0.2)
+        .num_voices(3)
+             .spread(0.2)
+           .detune(0.2)
         .volume(0.25)
 }
 
@@ -459,7 +461,7 @@ pub struct Performer {
     synths: HashMap<InstrumentName, dynamic::Synth>,
     current_time: f64,
     pending_events: BinaryHeap<NoteEvent>,
-    note_source: Receiver<(f64, InstrumentName, Note, f32, f64)>,
+    note_source: Receiver<(f64, InstrumentName, Note, f32, f64, f64)>,
 }
 
 impl Performer {
@@ -488,11 +490,11 @@ impl Performer {
 
     fn fill_notes(&mut self) {
         for _ in 0..10 {
-            let (onset, instrument, pitch, velocity, duration) = self.note_source.recv().unwrap();
+            let (onset, instrument, pitch, velocity, gap, duration) = self.note_source.recv().unwrap();
             self.pending_events
                 .push(NoteEvent::On(onset, instrument, pitch.clone(), velocity));
             self.pending_events
-                .push(NoteEvent::Off(onset + duration*0.8, instrument, pitch));
+                .push(NoteEvent::Off(onset + duration, instrument, pitch));
         }
     }
 
@@ -509,12 +511,12 @@ impl Performer {
             if next_event_time <= self.current_time {
                 // Trigger event
                 let event = self.pending_events.pop().unwrap();
-                let (onset, instrument, pitch, velocity, duration) =
+                let (onset, instrument, pitch, velocity, gap, duration) =
                     self.note_source.recv().unwrap();
                 self.pending_events
                     .push(NoteEvent::On(onset, instrument, pitch.clone(), velocity));
                 self.pending_events
-                    .push(NoteEvent::Off(onset + duration*0.8, instrument, pitch));
+                    .push(NoteEvent::Off(onset + duration, instrument, pitch));
                 match event {
                     NoteEvent::On(_, instrument, pitch, velocity) => {
                         self.synths
